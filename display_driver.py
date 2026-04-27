@@ -107,44 +107,72 @@ class DisplayDriver:
 
     def _test_connection(self, port: str, baud: int) -> Optional[serial.Serial]:
         try:
+            # Otevření portu s krátkým timeoutem pro testování
             tmp = serial.Serial(port, baud, timeout=0.5, write_timeout=0.5)
-            tmp.dtr = False
-            tmp.rts = False
+            tmp.dtr = tmp.rts = False
             time.sleep(0.2)
+            
+            # Vyčištění bufferu od smetí po restartu displeje
             tmp.reset_input_buffer()
+            
+            # Probuzení/Inicializace Nextionu/TJC (poslat 3x FF před příkazem)
             tmp.write(b'\xff\xff\xffconnect\xff\xff\xff')
-            time.sleep(0.5)
+            
+            # Čekání na fyzickou odpověď
+            time.sleep(0.6) 
+            
             if tmp.in_waiting:
                 resp = tmp.read(tmp.in_waiting)
-                logger.info(f"Odpověď na connect: {resp}")
-                return tmp
+                # Převedeme na malá písmena a zbavíme se bílých znaků pro robustní kontrolu
+                resp_str = resp.decode('ascii', errors='ignore').lower()
+                
+                logger.info(f"Test portu {port}@{baud} - Odpověď: {resp}")
+
+                # STRIKTNÍ KONTROLA: Displej musí odpovědět 'comok'
+                # Kontrolujeme 'comok' (TJC) nebo 'ok' (standardní odpověď některých verzí)
+                if "comok" in resp_str or "ok" in resp_str:
+                    logger.info(f"Validní displej nalezen na {port}@{baud}")
+                    return tmp
+                else:
+                    logger.warning(f"Na portu {port}@{baud} odpovídá něco jiného než displej.")
+            
             tmp.close()
         except Exception as e:
-            logger.debug(f"Pokus {port}@{baud} selhal: {e}")
+            # logger.debug(f"Pokus {port}@{baud} selhal: {e}")
+            pass
         return None
 
     def connect(self) -> bool:
         port = self.state.port if self.state.port != "Auto" else self._find_nextion_port()
-        logger.debug(f"Pokus o připojení k portu: {port}")
+        logger.debug(f"Hledám displej na portu: {port}")
+        
         if not port:
-            logger.warning("Nebyl nalezen žádný vhodný COM port.")
             return False
         
-        baud_rates = [self.state.baud_rate] if not self.state.auto_baud else \
-        [9600, 19200, 38400, 115200, 921600]
-        
+        # Seznam baudrate k otestování
+        baud_rates = [self.state.baud_rate]
+        if self.state.auto_baud:
+            # Testujeme od nejčastějších po nejrychlejší
+            baud_rates = [9600, 115200, 19200, 38400, 57600, 921600]
+            # Odstraníme duplicitu, pokud už tam self.state.baud_rate je
+            if self.state.baud_rate in baud_rates:
+                baud_rates.remove(self.state.baud_rate)
+            baud_rates.insert(0, self.state.baud_rate)
+            
         for b in baud_rates:
-            logger.debug(f"Testování baudrate: {b}")
+            logger.debug(f"Zkouším navázat spojení: {port} @ {b} bps")
             ser_conn = self._test_connection(port, b)
             if ser_conn:
-               logger.info(f"ÚSPĚCH: Připojeno na {port} @ {b} bps")
+               logger.info(f"ÚSPĚCH: Displej ověřen na {port} @ {b} bps")
+               # Nastavíme finální parametry pro stabilní provoz
                ser_conn.timeout = 0.1
                ser_conn.write_timeout = 0.5
                self.ser = ser_conn
                self.state.baud_rate = b
                self.cache.clear()
                return True  
-        logger.error("Selhaly všechny pokusy o připojení k displeji.")
+        
+        logger.error(f"Žádný displej na {port} neodpovídá na 'connect'.")
         return False
 
     def disconnect(self):
