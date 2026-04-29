@@ -1,3 +1,6 @@
+Here is the complete, professionally formatted code for your README.md file in English, fully updated for version v2.1.
+
+Markdown
 # 🖥️ mujDISPLAY Monitor (v2.1)
 
 **mujDISPLAY Monitor** is a sophisticated Windows hardware-monitoring solution that utilizes external **TJC (TaoJingChi)** or **Nextion** intelligent touch panels to visualize system statistics, weather data, and media controls in real-time.
@@ -15,7 +18,7 @@ Designed for power users and workstations, it provides a dedicated hardware dash
 * 📅 **International Name Days:** Real-time display of "who has a name day today" based on the application's language (supports CZ, SK, EN, DE, FR).
 * 📧 **Smart Office Integration:** Live counters for **Outlook** (Unread emails, **Calendar events**, and **Tasks**) or Thunderbird.
 * 📅 **Calendar Planner:** Displays the next upcoming meeting time and subject directly on the screen.
-* 🔄 **Smart HMI Update:** Automatic detection of HW model (T135 vs T035) and version comparison. Downloads and flashes the correct `.tft` firmware directly from the server.
+* 🔄 **Smart HMI Update:** Automatic detection of HW model (T135 vs T035) and binary version comparison. Downloads and flashes the correct `.tft` firmware directly from the server.
 * 🌐 **Multi-language UI:** Fully localized interface and display outputs (CZ, SK, EN, DE, FR).
 
 ---
@@ -70,3 +73,36 @@ Display Mode: Switch between PC Monitor, Meteo, Media, Graph, or Loop (auto-cycl
 Lock Settings: Configure display behavior when Windows is locked (Show Meteo, Dim to 0, or Sleep).
 
 Language: Affects both the App menu and the "Name Day" source.
+
+📝 Changelog
+v2.1 – Stability, Intelligence & UI Hotfix (2026-04-29)
+ADDED: Outlook Calendar integration – real-time tracking of today's appointments (Folder 9) and active tasks (Folder 13).
+
+ADDED: On-screen Planner – new rotating text section displaying the time and subject of the next calendar event.
+
+ADDED: Smart HMI Update – automatic HW model detection (T135 vs T035) and cloud firmware synchronization.
+
+ADDED: Binary Protocol 0x71 support – implemented decoding for binary display responses for precise version and value reading.
+
+CHANGED: Hardware Status UI – Tray menu labels now dynamically display the active COM port and Baudrate in real-time.
+
+CHANGED: Outlook Guard – added process detection for outlook.exe to prevent app hanging during startup if Outlook is closed.
+
+FIXED: PermissionError (13) – implemented "WriteFile failed" protection; the driver now performs a clean state reset and auto-reconnects if the port is locked.
+
+FIXED: SerialTimeoutException – added automatic output buffer flushing to prevent thread hanging during high-speed graph rendering.
+
+FIXED: Thread-Safe GUI – eliminated Tcl_AsyncDelete errors when closing the Terminal or dialog windows.
+
+v2.0 – Modular Core Update (2026-04-27)
+ADDED: Modular Architecture – full code separation into logical classes: DisplayDriver, WeatherProvider, SystemMonitor, AppState, and TrayIcon.
+
+ADDED: International Name Days – multi-language support (CZ, SK, EN, DE, FR) with localized API switching.
+
+CHANGED: Thread Safety – strict threading.Lock implementation for all serial port communications.
+
+FIXED: Network Auto-scaling – fixed the percentage calculation algorithm for high-speed (10Gbps+) network interfaces.
+
+Author: Petr Fodor, Controlsystems.cz
+
+License: MIT
