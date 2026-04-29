@@ -2,6 +2,7 @@
 """Počasí, jmeniny, email data."""
 
 import time
+import datetime  
 import logging
 import requests
 import pythoncom
@@ -41,26 +42,34 @@ class WeatherProvider:
         if auto_geo:
             try:
                 logger.debug("Zjišťuji polohu přes IP-API...")
-                geo = requests.get("http://ip-api.com/json/", timeout=5).json()
-                if geo['status'] == 'success':
+                geo_resp = requests.get("http://ip-api.com/json/", timeout=5)
+                geo_resp.raise_for_status()
+                geo = geo_resp.json()
+                if geo.get('status') == 'success':
                     logger.info(f"Poloha automaticky nastavena: {geo['city']}")
                     self.state.set_location(geo['city'], geo['lat'], geo['lon'])
+                    lat, lon = geo['lat'], geo['lon']
             except Exception as e:
                 logger.error(f"Selhalo zjištění polohy: {e}")
 
         try:
             url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m,surface_pressure,wind_speed_10m,wind_gusts_10m,uv_index&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=6"
             logger.debug(f"Volám Open-Meteo API: {url}")
-            r = requests.get(url, timeout=10).json()
             
-            self.meteo_raw = r
-            self.current_temp = int(r['current']['temperature_2m'])
-            hum = r['current']['relative_humidity_2m']
-            wind = int(r['current']['wind_speed_10m'])
-            pressure = int(r['current']['surface_pressure'])
-            uv = r['current']['uv_index']
-            tmax = int(r['daily']['temperature_2m_max'][0])
-            tmin = int(r['daily']['temperature_2m_min'][0])
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            
+            # Uložíme data do meteo_raw a pracujeme s nimi jako se slovníkem
+            data = response.json()
+            self.meteo_raw = data
+            
+            self.current_temp = int(data['current']['temperature_2m'])
+            hum = data['current']['relative_humidity_2m']
+            wind = int(data['current']['wind_speed_10m'])
+            pressure = int(data['current']['surface_pressure'])
+            uv = data['current']['uv_index']
+            tmax = int(data['daily']['temperature_2m_max'][0])
+            tmin = int(data['daily']['temperature_2m_min'][0])
 
             # ★★★ LOKALIZOVANÉ TEXTY ★★★
             self.weather_texts["curr"] = i18n._("weather_outside", temp=self.current_temp, hum=hum)
@@ -69,8 +78,10 @@ class WeatherProvider:
             self.weather_texts["det"] = i18n._("weather_pressure_uv", pressure=pressure, uv=uv)
             
             logger.debug("Počasí úspěšně zpracováno a uloženo do textů.")
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            logger.warning(f"Počasí nedostupné (výpadek sítě): {e}")
         except Exception as e:
-            logger.exception(f"Kritická chyba při stahování počasí: {e}")
+            logger.error(f"Neočekávaná chyba počasí: {e}")
 
     def map_weather_to_id(self, wmo_code):
         mapping = {0:7,1:8,2:9,3:10,45:11,48:11,51:12,53:12,55:12,61:12,63:12,65:12,71:13,73:13,75:13,80:14,81:14,82:14,95:14,96:14,99:14}
@@ -93,27 +104,77 @@ class WeatherProvider:
         client = self.state._config.email_client
         if client == "Outlook":
             try:
-                pythoncom.CoInitialize()
-                try:
-                    outlook = win32com.client.GetActiveObject("Outlook.Application")
-                except:
-                    logger.debug("Outlook data error.")
-                    outlook = win32com.client.Dispatch("Outlook.Application")
-                ns = outlook.GetNamespace("MAPI")
-                self.unread_emails = ns.GetDefaultFolder(6).UnReadItemCount
-                self.weather_texts["emails"] = f"E-mail: {self.unread_emails} | Akce: ? | Ukoly: ?"
-                self.weather_texts["event"] = ""
-            except:
+                # Kontrola, zda Outlook běží
+                outlook_running = any("outlook.exe" in p.name().lower() for p in psutil.process_iter(attrs=['name']))
+                if outlook_running:
+                    pythoncom.CoInitialize()
+                    try:
+                        outlook = win32com.client.GetActiveObject("Outlook.Application")
+                    except:
+                        outlook = win32com.client.Dispatch("Outlook.Application")
+                    
+                    ns = outlook.GetNamespace("MAPI")
+                    
+                    # 1. EMAILY (Inbox = 6)
+                    inbox = ns.GetDefaultFolder(6)
+                    self.unread_emails = inbox.UnReadItemCount
+                    
+                    # 2. KALENDÁŘ (Calendar = 9) - Filtrace dnešních akcí
+                    ev_count = 0
+                    ev_text = ""
+                    try:
+                        calendar = ns.GetDefaultFolder(9).Items
+                        calendar.Sort("[Start]")
+                        calendar.IncludeRecurrences = True
+                        
+                        now_dt = datetime.datetime.now()
+                        f_start = now_dt.strftime('%m/%d/%Y %I:%M %p')
+                        f_end = (now_dt.replace(hour=23, minute=59)).strftime('%m/%d/%Y %I:%M %p')
+                        
+                        # Dnešní události pro počítadlo
+                        today_ev = calendar.Restrict(f"[Start] >= '{f_start}' AND [End] <= '{f_end}'")
+                        ev_count = len(today_ev) if len(today_ev) < 100 else 0
+                        
+                        # První nadcházející událost pro textový řádek
+                        upcoming = calendar.Restrict(f"[End] >= '{f_start}'")
+                        for app in upcoming:
+                            if not app.AllDayEvent:
+                                ev_text = f"Plan: {app.Start.strftime('%H:%M')} - {unicodedata.normalize('NFD', app.Subject).encode('ascii', 'ignore').decode('ascii')}"
+                                break
+                    except Exception as e:
+                        logger.debug(f"Outlook Calendar error: {e}")
+
+                    # 3. ÚKOLY (Tasks = 13) - Pouze nedokončené
+                    task_count = 0
+                    try:
+                        tasks = ns.GetDefaultFolder(13).Items.Restrict("[Status] <> 2")
+                        task_count = len(tasks)
+                    except:
+                        pass
+                    
+                    # Sestavení finálních textů (ŽÁDNÉ OTAZNÍKY)
+                    self.weather_texts["emails"] = f"E-mail: {self.unread_emails} | Akce: {ev_count} | Ukoly: {task_count}"
+                    self.weather_texts["event"] = ev_text[:49]
+                else:
+                    self.weather_texts["emails"] = "Outlook zavren"
+                    self.unread_emails = 0
+                    self.weather_texts["event"] = ""
+            except Exception as e:
+                logger.debug(f"Outlook Critical Error: {e}")
                 self.weather_texts["emails"] = "Outlook Offline"
                 self.unread_emails = 0
+        
         elif client == "Thunderbird":
             self.unread_emails = self._get_thunderbird_unread()
-            running = any("thunderbird.exe" in p.name().lower() for p in psutil.process_iter())
-            self.weather_texts["emails"] = f"Thunderbird ({'Aktivni' if running else 'Zavren'}): {self.unread_emails} mailů"
+            is_run = any("thunderbird.exe" in p.name().lower() for p in psutil.process_iter())
+            self.weather_texts["emails"] = f"Thunderbird ({'Aktivni' if is_run else 'Zavren'}): {self.unread_emails} mailů"
+            self.weather_texts["event"] = ""
         else:
             self.weather_texts["emails"] = ""
+            self.weather_texts["event"] = ""
             self.unread_emails = 0
 
+        # --- Sekce IP a Síť (Ponechána beze změn) ---
         import socket, subprocess
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -121,7 +182,7 @@ class WeatherProvider:
             s.connect(("8.8.8.8", 80))
             ip = s.getsockname()[0]
             s.close()
-            output = subprocess.check_output("route print", shell=True).decode('cp852')
+            output = subprocess.check_output("route print", shell=True).decode('cp852', errors='ignore')
             gw = "?.?.?.?"
             for line in output.split('\n'):
                 if ' 0.0.0.0 ' in line:
@@ -138,15 +199,16 @@ class WeatherProvider:
         try:
             for profile in os.listdir(base):
                 path = os.path.join(base, profile)
-                for root, dirs, files in os.walk(path):
-                    for file in files:
-                        if file.endswith('.msf'):
-                            try:
-                                with open(os.path.join(root, file), 'rb') as f:
-                                    content = f.read().decode('latin-1', errors='ignore')
-                                    matches = re.findall(r'\^A2=([0-9a-fA-F]+)', content)
-                                    if matches: total += int(matches[-1], 16)
-                            except: continue
+                if os.path.isdir(path):
+                    for root, dirs, files in os.walk(path):
+                        for file in files:
+                            if file.endswith('.msf'):
+                                try:
+                                    with open(os.path.join(root, file), 'rb') as f:
+                                        content = f.read().decode('latin-1', errors='ignore')
+                                        matches = re.findall(r'\^A2=([0-9a-fA-F]+)', content)
+                                        if matches: total += int(matches[-1], 16)
+                                except: continue
         except: pass
         return total
 
@@ -154,18 +216,12 @@ class WeatherProvider:
         now = time.time()
         current_lang = self.state.language.lower()
         
-        # AKTUALIZUJEME POKUD:
-        # 1. Uplynula hodina
-        # 2. Jméno je prázdné
-        # 3. Změnil se jazyk aplikace (vynutí okamžitý dotaz v jiném jazyce)
         if (now - self.last_name_day > 3600 or 
             self.name_day.endswith("- - - ") or 
             current_lang != self.last_used_lang):
             
             try:
                 name = None
-                
-                # 1. Specifické API pro CZ a SK
                 if current_lang == 'cz':
                     url = "https://svatkyapi.cz/api/day"
                     r = requests.get(url, timeout=5).json()
@@ -174,16 +230,12 @@ class WeatherProvider:
                     url = "https://svatkyapi.cz/api/day?country=sk"
                     r = requests.get(url, timeout=5).json()
                     name = r.get('name')
-                
-                # 2. Mezinárodní API abalin.net
                 else:
                     lang_map = {'de': 'de', 'fr': 'fr', 'en': 'us'}
                     country_code = lang_map.get(current_lang, 'us')
                     url = "https://nameday.abalin.net/api/V2/today"
                     r = requests.get(url, timeout=5).json()
-                    
                     if r.get('success'):
-                        # Přístup k datům přes klíč 'data' dle vaší specifikace
                         name = r.get('data', {}).get(country_code)
                         if not name or name == "n/a":
                             name = r.get('data', {}).get('us', "---")
@@ -191,12 +243,9 @@ class WeatherProvider:
                 if name:
                     if "," in name:
                         name = name.split(",")[0].strip()
-
-                    # Odstranění diakritiky
                     name_clean = "".join(c for c in unicodedata.normalize('NFD', name)
                                          if unicodedata.category(c) != 'Mn')
                     
-                    # Prefix se mění automaticky díky i18n._ při každém volání metody
                     self.name_day = i18n._("nameday_prefix", name=name_clean)
                     self.last_name_day = now
                     self.last_used_lang = current_lang
@@ -206,7 +255,5 @@ class WeatherProvider:
                 logger.error(f"Chyba pri nacitani jmenin: {e}")
                 self.name_day = i18n._("nameday_prefix", name="- - - ")
                 
-        # Vrátíme buď nově stažené jméno, nebo zaktualizujeme prefix pro stávající jméno v paměti
-        # To zajistí, že i bez internetu se prefix (Svatek/Nameday) změní ihned
         raw_name = self.name_day.split(": ")[-1] if ": " in self.name_day else "---"
         return i18n._("nameday_prefix", name=raw_name)

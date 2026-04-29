@@ -1,15 +1,41 @@
 """
 ================================================================================
 PROJEKT: mujDISPLAY Monitor
-AUTOR:   Copyright (c) 2026 Petr Fodor, Controlsystems.cz
-VERZE:   v2.0 (2026-04-27)
+AUTOR:    Copyright (c) 2026 Petr Fodor, Controlsystems.cz
+VERZE:    v2.1 (2026-04-29)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy...
 (Full license text is in LICENSE file)
 ================================================================================
 
 CHANGELOG:
+v2.1 – Stability, Intelligence & UI Hotfix (2026-04-29)
+----------------
+Zaměřeno na eliminaci kritických chyb v komunikaci, plnou integraci Outlook dat a vylepšení stability GUI.
+* Komunikace a binární protokol:
+- Ochrana proti PermissionError: Vyřešena kritická chyba WriteFile failed (PermissionError 13). Pokud systém detekuje, že port je uzamčen nebo přístup odepřen, driver nyní provede čistý reset stavu (ser = None), což okamžitě aktivuje automatický pokus o znovupřipojení (reconnect).
+- Robustní Serial Write: Implementována ochrana proti SerialTimeoutException. Pokud displej nestíhá odbavovat instrukce (např. při rychlém vykreslování grafů), aplikace automaticky vyčistí výstupní buffer místo pádu celého vlákna.
+- Binární HMI verifikace: Přidána podpora pro dekódování binárních odpovědí displeje (protokol 0x71). Verze swver.val je nyní korektně čtena z Little-endian formátu.
+- Vláknové zabezpečení (Locking): Zpřísněn threading.Lock v metodě send_command a read_buttons, čímž byly eliminovány kolize na sériovém portu mezi hlavním cyklem a TouchListenerem.
+- Robustní Weather Engine: Opraveny chyby zpracování JSON (Response object subscriptable). Implementováno ošetření výpadků DNS (NameResolutionError), aplikace při ztrátě konektivity nezamrzá.
+* Integrace Outlook (Smart Office):
+- Kalendář a úkoly: Odstraněny statické zástupné znaky. Implementováno reálné vyčítání počtu dnešních schůzek (Folder 9) a aktivních úkolů (Folder 13) pomocí MAPI filtrů Restrict.
+- Plánovač na displeji: Přidána rotace textů zobrazující čas a název nejbližší nadcházející události z kalendáře (vč. automatického odstranění diakritiky).
+- Outlook Guard: Přidána detekce procesu outlook.exe před inicializací COM objektů, což radikálně zrychluje start aplikace, pokud není Outlook spuštěn.
+* HMI Smart Update:
+- Model-Specific Download: Implementována automatická detekce HW modelu (T135 vs T035) pomocí příkazu connect. Aplikace nyní stahuje správný .tft soubor podle identifikace panelu.
+- Version Compare: Přidána logika pro porovnání verze na serveru (version_hmi.txt) s binárně vyčtenou verzí přímo z panelu.
+* Vylepšení GUI a Tray Menu:
+- Thread-Safe GUI: Vyřešena kritická chyba "Tcl_AsyncDelete" (deleted by the wrong thread) při zavírání Terminálu a dialogů pomocí sekvence root.quit() a root.destroy().
+- Sjednocené zobrazení HW stavu: Popisky portů v menu se nyní dynamicky dotazují hardwaru. Zobrazují reálný COM port a Baudrate vyčtený ze sériové linky.
+- Custom Intervals UI: Vlastní časy v menu nyní v závorkách zobrazují aktuálně nastavenou hodnotu v sekundách pro okamžitý přehled.
+- Interaktivní Refresh: Metoda refresh() nyní zajišťuje okamžité překreslení zaškrtávacích políček (fajfek) v menu po jakékoliv změně nastavení.
+* Opravy v logice:
+- Loop Interval Fix: Opravena záměna proměnných v GUI dialogu mezi časem smyčky a zámkem meteo režimu.
+- Import Fix: Opravena chybějící reference na modul datetime v provideru počasí způsobující pád při výpočtu událostí.
+
 v2.0 – Modular Core Update (2026-04-27)
+----------------
 Zásadní architektonický přepis aplikace z monolitického skriptu do modulární struktury pro vyšší stabilitu a snadnější údržbu.
 * Architektura a Jádro:
 - Modularizace: Kód rozdělen do logických celků: DisplayDriver, WeatherProvider, SystemMonitor, AppState a TrayIcon.
@@ -112,7 +138,7 @@ from media_provider import MediaProvider
 from tray_icon import TrayIcon
 
 try:
-    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('mujDISPLAY.Monitor.1.6')
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('mujDISPLAY.Monitor.2.1')
 except Exception:
     pass
 
