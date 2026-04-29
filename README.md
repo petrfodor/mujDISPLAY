@@ -1,6 +1,3 @@
-Here is the complete, professionally formatted code for your README.md file in English, fully updated for version v2.1.
-
-Markdown
 # 🖥️ mujDISPLAY Monitor (v2.1)
 
 **mujDISPLAY Monitor** is a sophisticated Windows hardware-monitoring solution that utilizes external **TJC (TaoJingChi)** or **Nextion** intelligent touch panels to visualize system statistics, weather data, and media controls in real-time.
